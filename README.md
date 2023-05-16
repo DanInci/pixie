@@ -79,7 +79,7 @@ While we recommend users to use docker since it takes care of dependencies in di
 pip install ark-analysis==0.6.3
 ```
 
-Note that this pipeline requires python 3.8.
+Note that this pipeline requires python 3.8. Numpy version greater than 1.23.5 are not compatible with ark. Please make sure numpy>=1.20.3, <1.24.
 
 
 #### Running on Windows
