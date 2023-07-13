@@ -49,9 +49,13 @@ def metaclusterdata_from_files(cluster_path, cluster_type='pixel', prefix_trim=N
         '%s_meta_cluster_rename' % cluster_type: 'metacluster_rename'
     })
 
+    base_columns = ['cluster', 'metacluster', 'count']
+    if 'metacluster_rename' in cluster_data.columns:
+        base_columns = base_columns + ['metacluster_rename']
+
     # subset channels for visualisation
     if subset_channels is not None:
-        cluster_data = cluster_data[['cluster', 'metacluster', 'metacluster_rename', 'count'] + subset_channels]
+        cluster_data = cluster_data[base_columns + subset_channels]
 
     if 'cluster' not in cluster_data.columns:
         raise ValueError("Cluster table must include column named \"cluster\"")
