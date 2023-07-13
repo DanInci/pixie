@@ -1,15 +1,13 @@
 import multiprocessing
 import os
-import random
-from shutil import rmtree
+from functools import partial
 
 import feather
-from functools import partial
 import numpy as np
 import pandas as pd
 import scipy.ndimage as ndimage
-from skimage.io import imread
 from alpineer import io_utils, load_utils, misc_utils
+from skimage.io import imread
 
 from ark.phenotyping import pixel_cluster_utils
 
@@ -132,12 +130,12 @@ def preprocess_fov(base_dir, tiff_dir, data_dir, subset_dir, seg_dir, seg_suffix
         pixel_mat_chans=img_xr.channels.values
     )
 
-    # if seg_dir is None, leave seg_labels as None
-    seg_labels = None
-
-    # otherwise, load segmentation labels in for fov
+    # if seg_dir is not None, load the segmentation labels in for the fov,
+    # otherwise leave seg_labels as None
     if seg_dir is not None:
         seg_labels = imread(os.path.join(seg_dir, fov + seg_suffix))
+    else:
+        seg_labels = None
 
     # subset for the channel data
     img_data = img_xr.loc[fov, :, :, channels].values.astype(np.float32)
@@ -159,7 +157,7 @@ def preprocess_fov(base_dir, tiff_dir, data_dir, subset_dir, seg_dir, seg_suffix
                                          fov + ".feather"),
                             compression='uncompressed')
 
-    # write subseted dataset to feather, needed for training
+    # write subsetted dataset to feather, needed for training
     feather.write_dataframe(pixel_mat_subset,
                             os.path.join(base_dir,
                                          subset_dir,
@@ -176,7 +174,7 @@ def create_pixel_matrix(fovs, channels, base_dir, tiff_dir, seg_dir,
                         subset_dir='pixel_mat_subsetted',
                         norm_vals_name='channel_norm_post_rowsum.feather', is_mibitiff=False,
                         blur_factor=2, subset_proportion=0.1, seed=42,
-                        channel_percentile=0.99, multiprocess=False, batch_size=5):
+                        channel_percentile_postnorm=0.999, multiprocess=False, batch_size=5):
     """For each fov, add a Gaussian blur to each channel and normalize channel sums for each pixel
 
     Saves data to `data_dir` and subsetted data to `subset_dir`
@@ -218,8 +216,8 @@ def create_pixel_matrix(fovs, channels, base_dir, tiff_dir, seg_dir,
             The proportion of pixels to take from each fov
         seed (int):
             The random seed to set for subsetting
-        channel_percentile (float):
-            Percentile used to normalize channels to same range
+        channel_percentile_postnorm (float):
+            Percentile used to normalize channels after pixel normalization
         multiprocess (bool):
             Whether to use multiprocessing or not
         batch_size (int):
@@ -242,7 +240,7 @@ def create_pixel_matrix(fovs, channels, base_dir, tiff_dir, seg_dir,
         os.mkdir(os.path.join(base_dir, subset_dir))
 
     # create variable for storing 99.9% values
-    quant_dat = pd.DataFrame()
+    quantile_path = os.path.join(base_dir, data_dir, "channel_norm_post_rowsum_perfov.csv")
 
     # find all the FOV files in the full data and subsetted directories
     # NOTE: this handles the case where the data file was written, but not the subset file
@@ -264,6 +262,13 @@ def create_pixel_matrix(fovs, channels, base_dir, tiff_dir, seg_dir,
         print("There are no more FOVs to preprocess, skipping")
         return
 
+    # check for missing quant data and add to the list of FOVs for processing
+    quant_dat_all = pd.read_csv(quantile_path, index_col="channel") \
+        if os.path.exists(quantile_path) else pd.DataFrame()
+    quant_fov_list = quant_dat_all.columns
+    quant_missing = list(set(fovs).difference(set(quant_fov_list)))
+    fovs_list = list(set(fovs_list).union(set(quant_missing)))
+
     # if the process is only partially complete, inform the user of restart
     if len(fovs_list) < len(fovs):
         print("Restarting preprocessing from FOV %s, "
@@ -271,7 +276,7 @@ def create_pixel_matrix(fovs, channels, base_dir, tiff_dir, seg_dir,
 
     # check to make sure correct channels were specified
     pixel_cluster_utils.check_for_modified_channels(
-        tiff_dir=tiff_dir, 
+        tiff_dir=tiff_dir,
         test_fov=fovs[0],
         img_sub_folder=img_sub_folder,
         channels=channels
@@ -310,9 +315,14 @@ def create_pixel_matrix(fovs, channels, base_dir, tiff_dir, seg_dir,
 
                     # drop the metadata columns and generate the 99.9% quantile values for the FOV
                     fov_full_pixel_data = pixel_mat_data.drop(columns=cols_to_drop)
-                    quant_dat[fov] = fov_full_pixel_data.replace(
-                        0, np.nan
-                    ).quantile(q=0.999, axis=0)
+                    quant_dat_fov = fov_full_pixel_data.replace(0, np.nan).quantile(
+                        q=channel_percentile_postnorm, axis=0).rename(fov)
+                    quant_dat_fov.index.name = "channel"
+
+                    # update the file with the newly processed fov quantile value
+                    quant_dat_all = quant_dat_all.merge(quant_dat_fov, how="outer",
+                                                        left_index=True, right_index=True)
+                    quant_dat_all.to_csv(quantile_path)
 
                 # update number of fovs processed
                 fovs_processed += len(fov_batch)
@@ -323,7 +333,14 @@ def create_pixel_matrix(fovs, channels, base_dir, tiff_dir, seg_dir,
 
             # drop the metadata columns and generate the 99.9% quantile values for the FOV
             fov_full_pixel_data = pixel_mat_data.drop(columns=cols_to_drop)
-            quant_dat[fov] = fov_full_pixel_data.replace(0, np.nan).quantile(q=0.999, axis=0)
+            quant_dat_fov = fov_full_pixel_data.replace(0, np.nan).quantile(
+                q=channel_percentile_postnorm, axis=0).rename(fov)
+            quant_dat_fov.index.name = "channel"
+
+            # update the file with the newly processed fov quantile values
+            quant_dat_all = quant_dat_all.merge(quant_dat_fov, how="outer",
+                                                left_index=True, right_index=True)
+            quant_dat_all.to_csv(quantile_path)
 
             # update number of fovs processed
             fovs_processed += 1
@@ -332,10 +349,13 @@ def create_pixel_matrix(fovs, channels, base_dir, tiff_dir, seg_dir,
             if fovs_processed % 10 == 0 or fovs_processed == len(fovs_list):
                 print("Processed %d fovs" % fovs_processed)
 
-    # get mean 99.9% across all fovs for all markers
-    mean_quant = pd.DataFrame(quant_dat.mean(axis=1))
+    # get mean 99.9% across all fovs for all markers, check that none are missing
+    mean_quant = pd.DataFrame(quant_dat_all.mean(axis=1))
 
     # save 99.9% normalization values
     feather.write_dataframe(mean_quant.T,
                             os.path.join(base_dir, norm_vals_name),
                             compression='uncompressed')
+
+    # delete quantile data file
+    os.remove(quantile_path)

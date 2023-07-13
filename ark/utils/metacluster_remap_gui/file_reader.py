@@ -5,7 +5,7 @@ from alpineer import io_utils, misc_utils
 from .metaclusterdata import MetaClusterData
 
 
-def metaclusterdata_from_files(cluster_path, cluster_type='pixel', prefix_trim=None):
+def metaclusterdata_from_files(cluster_path, cluster_type='pixel', prefix_trim=None, subset_channels=None):
     """Read and validate raw CSVs and return an initialized MetaClusterData
 
     Args:
@@ -15,6 +15,8 @@ def metaclusterdata_from_files(cluster_path, cluster_type='pixel', prefix_trim=N
             the type of cluster data to read, needs to be either `'pixel'` or `'cell'`
         prefix_trim (str):
             If set, remove this prefix from each column of the data in `cluster_path`
+        subset_channels (list of str):
+            If set, will subset selected channels from the clustering for visualisation purposes
 
     Returns:
         MetaClusterData:
@@ -46,6 +48,10 @@ def metaclusterdata_from_files(cluster_path, cluster_type='pixel', prefix_trim=N
         '%s_meta_cluster' % cluster_type: 'metacluster',
         '%s_meta_cluster_rename' % cluster_type: 'metacluster_rename'
     })
+
+    # subset channels for visualisation
+    if subset_channels is not None:
+        cluster_data = cluster_data[['cluster', 'metacluster', 'metacluster_rename', 'count'] + subset_channels]
 
     if 'cluster' not in cluster_data.columns:
         raise ValueError("Cluster table must include column named \"cluster\"")

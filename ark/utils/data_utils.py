@@ -1,3 +1,4 @@
+import itertools
 import os
 import pathlib
 import re
@@ -9,6 +10,7 @@ import numpy as np
 import pandas as pd
 import skimage.io as io
 from alpineer import data_utils, image_utils, io_utils, load_utils, misc_utils
+from alpineer.settings import EXTENSION_TYPES
 from tqdm.notebook import tqdm_notebook as tqdm
 
 from ark import settings
@@ -296,7 +298,7 @@ def generate_pixel_cluster_mask(fov, base_dir, tiff_dir, chan_file_path,
     y_coords = fov_data['column_index'].values
 
     # convert to 1D indexing
-    coordinates = x_coords * img_data.shape[0] + y_coords
+    coordinates = x_coords * img_data.shape[1] + y_coords
 
     # get the cooresponding cluster labels for each pixel
     cluster_labels = list(fov_data[pixel_cluster_col])
@@ -478,7 +480,7 @@ def stitch_images_by_shape(data_dir, stitched_dir, img_sub_folder=None, channels
     io_utils.validate_paths(data_dir)
 
     # no img_sub_folder, change to empty string to read directly from base folder
-    if img_sub_folder is None:
+    if img_sub_folder in [None, '', ""]:
         img_sub_folder = ""
 
     if clustering and clustering not in ['pixel', 'cell']:
@@ -505,11 +507,14 @@ def stitch_images_by_shape(data_dir, stitched_dir, img_sub_folder=None, channels
     if os.path.exists(stitched_dir):
         raise ValueError(f"The {stitched_dir} directory already exists.")
 
+    search_term: str = re.compile(r"(R\+?\d+)(C\+?\d+)")
+
     bad_fov_names = []
     for fov in fovs:
-        r = re.compile('.*R.*C.*')
-        if r.match(fov) is None:
+        res = re.search(search_term, fov)
+        if res is None:
             bad_fov_names.append(fov)
+
     if len(bad_fov_names) > 0:
         raise ValueError(f"Invalid FOVs found in directory, {data_dir}. FOV names "
                          f"{bad_fov_names} should have the form RnCm.")
@@ -518,9 +523,9 @@ def stitch_images_by_shape(data_dir, stitched_dir, img_sub_folder=None, channels
     if not segmentation and not clustering:
         channel_imgs = io_utils.list_files(
             dir_name=os.path.join(data_dir, fovs[0], img_sub_folder),
-            substrs=['.tiff', '.jpg', '.png'])
+            substrs=EXTENSION_TYPES["IMAGE"])
     else:
-        channel_imgs = io_utils.list_files(data_dir, substrs=fovs[0])
+        channel_imgs = io_utils.list_files(data_dir, substrs=fovs[0]+'_')
         channel_imgs = [chan.split(fovs[0] + '_')[1] for chan in channel_imgs]
 
     if channels is None:
@@ -529,18 +534,22 @@ def stitch_images_by_shape(data_dir, stitched_dir, img_sub_folder=None, channels
         misc_utils.verify_in_list(channel_inputs=channels,
                                   valid_channels=io_utils.remove_file_extensions(channel_imgs))
 
-    os.makedirs(stitched_dir)
-
-    file_ext = channel_imgs[0].split('.')[1]
-    expected_fovs, num_rows, num_cols = load_utils.get_tiled_fov_names(fovs, return_dims=True)
+    file_ext = os.path.splitext(channel_imgs[0])[1]
+    expected_tiles = load_utils.get_tiled_fov_names(fovs, return_dims=True)
 
     # save new images to the stitched_images, one channel at a time
-    for chan in channels:
+    for chan, tile in itertools.product(channels, expected_tiles):
+        prefix, expected_fovs, num_rows, num_cols = tile
+        if prefix == "":
+            prefix = "unnamed_tile"
+        stitched_subdir = os.path.join(stitched_dir, prefix)
+        if not os.path.exists(stitched_subdir):
+            os.makedirs(stitched_subdir)
         image_data = load_utils.load_tiled_img_data(data_dir, fovs, expected_fovs, chan,
                                                     single_dir=any([segmentation, clustering]),
-                                                    file_ext=file_ext,
+                                                    file_ext=file_ext[1:],
                                                     img_sub_folder=img_sub_folder)
         stitched_data = data_utils.stitch_images(image_data, num_cols)
         current_img = stitched_data.loc['stitched_image', :, :, chan].values
-        image_utils.save_image(os.path.join(stitched_dir, chan + '_stitched.' + file_ext),
+        image_utils.save_image(os.path.join(stitched_subdir, chan + '_stitched' + file_ext),
                                current_img)
