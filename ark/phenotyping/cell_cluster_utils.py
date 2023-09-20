@@ -90,7 +90,9 @@ def create_c2pc_data(fovs, pixel_data_path, cell_table_path,
     )
 
     # read the cell table data
-    cell_table = pd.read_csv(cell_table_path)
+    cell_table = pd.read_csv(cell_table_path, dtype={
+        'fov': str,
+    })
 
     # verify that the user has specified fov, label, and cell_size columns in their cell table
     misc_utils.verify_in_list(
