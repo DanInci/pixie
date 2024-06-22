@@ -200,5 +200,5 @@ if __name__ == "__main__":
     dataset = args.dataset
     blur_factor = args.blur_factor
 
-    config_path = os.path.join(base_dir, f'output/{dataset}/pixie/Blur={blur_factor}/config.json')
+    config_path = os.path.join(base_dir, f'output/{dataset}/pixie/{blur_factor}/config.json')
     main(config_path)
