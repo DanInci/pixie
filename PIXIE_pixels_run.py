@@ -191,7 +191,7 @@ if __name__ == "__main__":
 
     # Define arguments
     parser.add_argument('--dataset', type=str, help='Dataset name', default='IMMUcan_2022_CancerExample')
-    parser.add_argument('--blur_factor', type=int, help='Blur factor', default=2)
+    parser.add_argument('--blur_factor', type=str, help='Blur factor', default='Blur=2')
     parser.add_argument('--base_dir', type=str, help='Base directory', default='/home/dani/Documents/Thesis/Methods/IMCBenchmark')
 
     # Parse arguments
